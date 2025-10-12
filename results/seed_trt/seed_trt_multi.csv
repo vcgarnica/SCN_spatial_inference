@@ -1,0 +1,7 @@
+"Model","Contrast","Reference","predicted.value","standard.error","lower.Confidence.limit","upper.Confidence.limit"
+"baseline","Fluopyram vs Base",5287.7,148.3,47.4,53.7,243
+"scn_covariate","Fluopyram vs Base",5312.6,123,46.2,31,215.1
+"ar1","Fluopyram vs Base",5297.5,120.2,40.4,40.1,200.4
+"ar1_nugget","Fluopyram vs Base",5299.3,115.9,41.6,33.3,198.6
+"ta","Fluopyram vs Base",5301.1,112.2,42.1,28.6,195.9
+"tps","Fluopyram vs Base",5197.4,113,41,31.4,194.5

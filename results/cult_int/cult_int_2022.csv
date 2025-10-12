@@ -1,0 +1,13 @@
+"Model","Contrast","Reference","predicted.value","standard.error","lower.Confidence.limit","upper.Confidence.limit"
+"baseline","Peking vs PI88788",5068.1,-23.1,97.7,-223.2,177
+"scn_covariate","Peking vs PI88788",5087.2,-60.9,146.3,-361.2,239.4
+"ar1","Peking vs PI88788",5051.2,-10.6,124.3,-259.1,237.8
+"ar1_nugget","Peking vs PI88788",5020.1,7.5,118.7,-241.5,256.6
+"ta","Peking vs PI88788",5032.4,9.2,120.6,-243.9,262.2
+"tps","Peking vs PI88788",5016.4,34.3,119.2,-212.5,281.2
+"baseline","Peking + Base vs PI88788 + Fluopyram",5149.1,-231.9,110.9,-457.1,-6.7
+"scn_covariate","Peking + Base vs PI88788 + Fluopyram",5159.9,-265.8,147.7,-566.1,34.5
+"ar1","Peking + Base vs PI88788 + Fluopyram",5118.6,-208.3,126.3,-462.6,45.9
+"ar1_nugget","Peking + Base vs PI88788 + Fluopyram",5088.1,-190.4,122.9,-440.3,59.5
+"ta","Peking + Base vs PI88788 + Fluopyram",5101.7,-185.3,124.6,-438.8,68.2
+"tps","Peking + Base vs PI88788 + Fluopyram",5089.8,-172.9,122.2,-420.5,74.7

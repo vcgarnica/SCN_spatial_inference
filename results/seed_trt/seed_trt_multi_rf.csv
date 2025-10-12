@@ -1,0 +1,6 @@
+"Model","Contrast","Reference","predicted.value","standard.error","lower.Confidence.limit","upper.Confidence.limit","Bt","Bt_lower_CI","Bt_upper_CI","Eff","Eff_lower_CI","Eff_upper_CI"
+"baseline","Fluopyram vs Base",0.701,0.03,0.11,-0.18,0.25,1.033,0.832,1.282,-3.3,-28.2,16.8
+"ar1","Fluopyram vs Base",0.692,0.05,0.11,-0.17,0.27,1.051,0.847,1.305,-5.1,-30.5,15.3
+"ar1_nugget","Fluopyram vs Base",0.692,0.03,0.1,-0.18,0.23,1.027,0.835,1.262,-2.7,-26.2,16.5
+"ta","Fluopyram vs Base",0.726,0.03,0.11,-0.19,0.25,1.03,0.828,1.282,-3,-28.2,17.2
+"tps","Fluopyram vs Base",0.698,0.02,0.1,-0.18,0.22,1.017,0.833,1.243,-1.7,-24.3,16.7

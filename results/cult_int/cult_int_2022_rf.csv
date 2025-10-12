@@ -1,0 +1,11 @@
+"Model","Contrast","Reference","predicted.value","standard.error","lower.Confidence.limit","upper.Confidence.limit","Bt","Bt_lower_CI","Bt_upper_CI","Eff","Eff_lower_CI","Eff_upper_CI"
+"baseline","Peking vs PI88788",0.919,-0.29,0.12,-0.53,-0.05,0.747,0.587,0.95,25.3,5,41.3
+"ar1","Peking vs PI88788",0.912,-0.29,0.12,-0.52,-0.06,0.747,0.592,0.942,25.3,5.8,40.8
+"ar1_nugget","Peking vs PI88788",0.873,-0.29,0.11,-0.51,-0.07,0.747,0.599,0.932,25.3,6.8,40.1
+"ta","Peking vs PI88788",0.869,-0.28,0.11,-0.49,-0.06,0.758,0.611,0.941,24.2,5.9,38.9
+"tps","Peking vs PI88788",0.884,-0.27,0.11,-0.5,-0.04,0.764,0.608,0.959,23.6,4.1,39.2
+"baseline","Peking + Base vs PI88788 + Fluopyram",0.946,-0.2,0.16,-0.52,0.11,0.815,0.595,1.117,18.5,-11.7,40.5
+"ar1","Peking + Base vs PI88788 + Fluopyram",0.94,-0.22,0.15,-0.52,0.09,0.803,0.592,1.089,19.7,-8.9,40.8
+"ar1_nugget","Peking + Base vs PI88788 + Fluopyram",0.898,-0.21,0.15,-0.5,0.09,0.814,0.604,1.096,18.6,-9.6,39.6
+"ta","Peking + Base vs PI88788 + Fluopyram",0.894,-0.19,0.15,-0.48,0.11,0.829,0.617,1.114,17.1,-11.4,38.3
+"tps","Peking + Base vs PI88788 + Fluopyram",0.916,-0.21,0.15,-0.51,0.09,0.811,0.602,1.092,18.9,-9.2,39.8

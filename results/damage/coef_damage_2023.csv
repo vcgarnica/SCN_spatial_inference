@@ -1,0 +1,11 @@
+"Model","Resistance","Estimate","StdError","PercentEffect"
+"scn_covariate","Peking_initial",-262.2,75.8,-4.6
+"scn_covariate","PI88788_initial",-325.7,75.7,-5.7
+"ar1","Peking_initial",-249.8,75.9,-4.4
+"ar1","PI88788_initial",-309.1,76.6,-5.4
+"ar1_nugget","Peking_initial",-257.6,72.1,-4.5
+"ar1_nugget","PI88788_initial",-288.2,70,-5
+"ta","Peking_initial",-319,71.7,-5.5
+"ta","PI88788_initial",-312.1,67.2,-5.4
+"tps","Peking_initial",-262.1,71.4,-4.6
+"tps","PI88788_initial",-293.1,69.8,-5.1

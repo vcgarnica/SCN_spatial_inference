@@ -1,0 +1,1273 @@
+---
+title: "Field evaluation of integrated soybean cyst nematode management using spatially informed mixed models - Part 1"
+date: "`r Sys.Date()`"
+format:
+  html:
+    self-contained: true
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    code-line-numbers: true
+editor_options: 
+  chunk_output_type: console
+---
+
+[GitHub Repository](https://github.com/vcgarnica/SCN_spatial_inference)  
+
+This file contains the full R workflow for processing and analyzing raw data, as well as generating figures for the manuscript. The Rmarkdown file can be downloaded from the *Code* drop down menu (top right).
+
+## Soybean cyst nematode {-}
+
+Soybean cyst nematode (SCN), caused by *Heterodera glycines*, is among the most economically damaging pests of soybean in North America. As an obligate, sedentary endoparasite, SCN establishes a syncytium in soybean roots, disrupting nutrient flow, stunting growth, and reducing yield.
+
+Effective SCN management relies on integrated strategies. Host resistance is the most cost-effective tool, with PI 88788 and Peking providing season-long protection when matched to local nematode populations. However, SCN populations display high virulence diversity, and repeated use of the same resistance genes accelerates adaptation. Seed-applied products such as fluopyram can protect soybean yield under SCN pressure, but they generally do not reduce nematode reproduction to the extent achieved by host resistance, and their efficacy remains variable.
+
+This study evaluates integrated SCN management strategies combining resistant cultivars and fluopyram seed treatment on soybean yield and SCN reproduction. We investigate the yield sensitivity of Peking- and PI 88788-derived resistance under pressure from HG Type 1.2.5.7. Critically, we employ advanced spatial modeling to account for field-scale heterogeneity in nematode distribution and soil properties, thereby improving the precision of treatment effect estimates and the reliability of our inferences.
+
+## Objectives {-}
+
+With PI 88788 as the predominant resistance source in Ohio and Peking becoming more available, understanding their performance, both alone and combined with chemical tools, is vital. 
+
+Therefore, the objectives of this study are to:
+
+* Evaluate the individual and combined effects of Peking- and PI 88788-derived resistance with fluopyram seed treatment on soybean yield and SCN reproduction in Ohio fields infested with the virulent HG Type 1.2.5.7
+
+* Quantify and compare the yield sensitivity (damage coefficients) of these resistance sources to increasing pre-plant SCN pressure
+
+* Employ and compare linear mixed models with spatial covariance structures to control for field heterogeneity, thereby generating more accurate and precise estimates of treatment efficacy
+
+#### Load packages and dataset {-}
+
+```{r setup, echo=FALSE}
+# Global setup - runs once at beginning
+knitr::opts_chunk$set(
+  echo = TRUE,          
+  warning = FALSE,      
+  message = FALSE,      
+  fig.align = "center", 
+  fig.width = 8,        
+  fig.height = 6        
+)
+```
+
+```{r,message=FALSE,error=FALSE}
+
+required_packages = c(
+  "tidyverse",    # Data manipulation and visualization
+  "asreml",       # Mixed modeling
+  "asremlPlus",   # Model diagnostics
+  "kableExtra",   # Table formatting
+  "patchwork",    # Plot arrangement
+  "TPSbits",      # Tensor spline modeling
+  "ggrepel"
+)
+
+invisible(lapply(required_packages, library, character.only = TRUE))
+
+asreml.options(gammaPar = TRUE)
+theme_set(theme_minimal(base_size = 12))
+
+source("functions.r")
+
+cc = c(
+  "#0a0a23",    
+  "#1e2a5e", 
+  "#2d4aa7", 
+  "#3d6bd1",
+  "#7ba5f5",    
+  "#a8c8ff",
+  "#d4e6ff",    
+  "#ffe0d4",    
+  "#ffb8a8", 
+  "#ff917b",
+  "#ff6b4e",
+  "#ff7a33")
+
+
+tile_data = expand.grid(
+  col = c(1.375, 2.125, 2.875, 3.625),  
+  row = c(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 
+          11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 
+          21.5, 22.5, 23.5),  # Adjusted row positions
+  year = c(2022, 2023)
+) %>%
+  filter(!((year == 2022) & (row > 19.5)))
+
+
+
+```
+
+## Methods {.unnumbered}
+
+### Experimental conditions and design {.unnumbered}
+Field trials were conducted at the North Central Agricultural Research Station (Sandusky County, Ohio) during the 2022 and 2023 growing seasons, each representing a distinct environment.
+
+A split-plot randomized complete block design with eight replications was used both years (referred to as environments here). Main plots included six Pioneer soybean cultivars with different SCN resistance sources. Subplots received either base seed or fluopyram + base-treated seed. Row and column identifiers were retained for spatial modeling.
+
+### SCN population density metrics {.unnumbered}
+SCN population densities were quantified at three critical time points: pre-planting (initial density, $P_i$), 45 days after planting ($P_{45DAP}$), and at harvest (final density, $P_f$). Population densities are expressed as the number of eggs per 100 cm³ of soil. The nematode reproduction factor was calculated for each plot as $Rf = P_f / P_i$. For statistical analysis, $P_i$ was mean-centered and both $P_i$ and $Rf$ were log-transformed to stabilize variance.
+
+
+```{r}
+dat = read_csv("pioneers.csv", show_col_types = FALSE)
+
+dat = dat %>%
+  mutate(
+      trt = factor(as.numeric(interaction(cult, seed_trt, sep = ":"))),
+      wp = factor(as.numeric(interaction(cult, block, sep = ":"))),
+      across(c(location, block, site, trt, plot, cult, resis, seed_trt), as.factor),
+      row_f = factor(row),
+      col_f = factor(col),
+      SCN_rf = SCN_final/SCN_initial,
+      log_centered_initial = log(dat$SCN_initial) - mean(log(dat$SCN_initial), na.rm = TRUE)
+    ) %>%
+    relocate(trt, .before = cult) %>% 
+    arrange(site, row, col) %>% 
+    na.omit() %>%
+    droplevels() %>%
+    mutate(seed_trt = recode(seed_trt, "ILeVO" = "Fluopyram"),
+           seed_trt = recode(seed_trt, "BASE" = "Base"),
+           seed_trt = factor(seed_trt, levels = c("Base", "Fluopyram")))
+
+dat %>%
+  group_by(year) %>%
+  skimr::skim() 
+
+```
+
+
+### Exploratory Analysis {.unnumbered}
+
+Exploratory analysis was conducted to visualize patterns in the data, assess variability across treatments and cultivars, and identify potential relationships among key variables. Plots were used to examine yield and SCN reproduction responses by resistance source and seed treatment, as well as trends across initial SCN population densities.
+
+```{r,echo=FALSE,fig.height=8}
+custom_colors = c(
+  "#2d4aa7",   # Blue
+  "#c0392b"    # Deep red
+)
+
+p1 = dat %>%
+  ggplot(aes(x = SCN_initial, y = yield_kg_ha, colour = resis)) +
+  geom_point(alpha = 0.6, size = 2.5) +
+  geom_smooth(formula = y~x, method = "lm", se = TRUE, linewidth = 1.8, alpha = 0.2) +
+  scale_color_manual(values = custom_colors) +  
+  scale_x_continuous(labels = scales::label_comma()) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  labs(
+    y = expression("Grain yield (kg"~ha^{-1}*")"),  
+    color = "Resistance source",
+    x = expression("SCN egg population density at planting (" * P[i] * ")")
+  )
+
+
+p2 = dat %>%
+  mutate(
+    seed_trt = recode(seed_trt, "Fluopyram" = "Fluopyram"),
+    seed_trt = recode(seed_trt, "Base" = "Base"),
+    seed_trt = factor(seed_trt, levels = c("Base", "Fluopyram"))
+  ) %>%
+  ggplot(aes(x = seed_trt, y = SCN_rf, color = resis)) +
+  geom_boxplot(
+    position = position_dodge(width = 0.75), 
+    size = 1.2, 
+    outliers = FALSE, 
+    alpha = 0.3,
+    fill = "white"
+  ) +
+  geom_jitter(
+    position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.75), 
+    alpha = 0.7, 
+    size = 2.2, 
+    shape = 19
+  ) +
+  facet_wrap(~resis) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  scale_color_manual(values = custom_colors) +  # Use custom colors
+  geom_hline(yintercept = 1, colour = "black", linewidth = 1.2, linetype = "dashed") +
+  labs(
+    y = expression("SCN reproduction factor (" * R[f] == P[f]/P[i] * ")"),
+    x = NULL,
+    color = "Resistance source"
+  ) + 
+  guides(color = "none")  +
+  theme(axis.title.x = element_text( margin = margin(t = 10)),
+        axis.text.x = element_text(angle = 45,hjust = 1,size = 11))
+
+p3 = dat %>%
+  mutate(
+    seed_trt = recode(seed_trt, "Fluopyram" = "Fluopyram"),
+    seed_trt = recode(seed_trt, "Base" = "Base"),
+    seed_trt = factor(seed_trt, levels = c("Base", "Fluopyram"))
+  ) %>%
+  ggplot(aes(x = seed_trt, y = yield_kg_ha, color = resis)) +
+  geom_boxplot(
+    position = position_dodge(width = 0.75), 
+    size = 1.2, 
+    outliers = FALSE, 
+    alpha = 0.3,
+    fill = "white"
+  ) +
+  geom_jitter(
+    position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.75), 
+    alpha = 0.7, 
+    size = 2.2, 
+    shape = 19
+  ) +
+  facet_wrap(~resis) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  scale_color_manual(values = custom_colors) +  # Use custom colors
+  labs(
+    y = expression("Grain yield (kg"~ha^{-1}*")"), 
+    x = NULL,
+    color = "Resistance source"
+  ) + 
+  guides(color = "none")  +
+  theme(axis.title.x = element_text( margin = margin(t = 10)),
+        axis.text.x = element_text(angle = 45,hjust = 1,size = 11))
+
+ (p3 + p2) / p1 + 
+  plot_annotation(
+    tag_levels = 'A')+
+  plot_layout(
+    axis_titles = "collect",
+    heights = c(1, 1.5)  # Give more space to the bottom plot
+  )
+
+
+ggsave("results/fig_1.tiff",units="in", width=8, height=9)
+
+```
+**Figure 1**. Distributions of soybean yield and soybean cyst nematode (SCN) reproduction under different resistance sources and seed treatments. Panels **A** and **B** show boxplots of grain yield and SCN reproduction factor ($R_f$), respectively, stratified by resistance source. Panel **C** illustrates the association between initial SCN density ($P_i$) and yield. Resistance sources are color-coded: blue for Peking-derived and red for PI 88788-derived cultivars.
+
+
+
+## Statistical analyses {.unnumbered}
+
+To evaluate treatment effects both within and across environments, we fitted a suite of linear mixed models using the `ASReml-R` package. Separate model-fitting functions were developed for single-site and multi-site analyses. The fixed effects component included cultivar, seed treatment, and their interaction, with optional covariate adjustment for pre-plant SCN egg density ($P_i$) where appropriate. Random effects were specified to account for the blocking structure (blocks nested within environments) and whole-plot error, in accordance with the split-plot design.
+
+To address field-scale spatial heterogeneity, we compared five distinct residual variance-covariance structures:
+
+-   Baseline: Independent and identically distributed errors
+-   SCN-adjusted: Baseline + a covariate
+-   Autoregressive (AR1): Row-wise autoregressive correlation
+-   AR1 + Nugget: AR1 structure with an additional micro-scale error term
+-   Trend-Adjusted (TA): AR1 + Nugget with fixed linear row and/or column trends
+-   Tensor-Product Splines (TPS): A two-dimensional smooth spatial surface using penalized splines
+
+For multi-environment models, heterogeneous residual variances across sites were accommodated using direct-sum formulations, allowing site-specific variance estimates. Model selection was guided by restricted maximum likelihood (REML) and information criteria (adjusted AIC and BIC)
+
+The code below implements the statistical models described in the manuscript, with each model reflecting a distinct spatial variance structure outlined in the mathematical notation section. The `single_site_models()` and `multi_site_models()` functions generate model objects for site-specific and multi-environment analyses, respectively.
+
+```{r}
+single_site_models = function(data, model_type, covariate = NULL) {
+  data_name = substitute(data) 
+  
+  fixed_formula = if (!is.null(covariate)) {
+    f = as.formula(paste("yield_kg_ha ~ 1 + cult*seed_trt +", covariate))
+    environment(f) = baseenv()
+    f
+  } else {
+    f = as.formula("yield_kg_ha ~ 1 + cult*seed_trt")
+    environment(f) = baseenv()
+    f
+  }
+  
+  dat1 = spatial_matrix(data)
+  
+  model_expr = switch(model_type,
+                       "baseline" = substitute(asreml(
+                         fixed = FIXED,
+                         random = ~ block + wp,
+                         residual = ~ units,
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                       "structured" = substitute(asreml(
+                         fixed = FIXED,
+                         random = ~ block + wp,
+                         residual = ~ id(row_f):id(col_f),
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                       "ar1" = substitute(asreml(
+                         fixed = FIXED,
+                         random = ~ block + wp,
+                         residual = ~ ar1(row_f):id(col_f),
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                       "ar1_nugget" = substitute(asreml(
+                         fixed = FIXED,
+                         random = ~ block + wp + idv(units),
+                         residual = ~ ar1(row_f):id(col_f),
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                       "ta" = substitute(asreml(
+                         fixed = update(FIXED, ~ . + lin(row_f) + lin(col_f)),
+                         random = ~ block + wp + idv(units),
+                         residual = ~ ar1(row_f):id(col_f),
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                      "tps" = {
+                         nseg = c(length(unique(data[["col"]])), length(unique(data[["row"]])) / 2)
+                         TPXZg = tpsmmb("col", "row", data, stub = "1", nsegments = nseg,
+                                         asreml = "grp", eigenvalues = TRUE)
+                          
+                         substitute(asreml(
+                         fixed = update(FIXED, ~ . + TP.CR.2 + TP.CR.3 + TP.CR.4),
+                         random = ~ block + wp + 
+                           grp(TP.C.1_frow) + grp(TP.C.2_frow) + grp(TP.R.1_fcol) + grp(TP.R.2_fcol)+ grp(TP_fcol_frow),
+                         group = TPXZg$grp,
+                         residual = ~ id(row_f):id(col_f),
+                         data = TPXZg$data,
+                         na.action = na.method(x = "include", y = "include")), 
+                         list(FIXED = fixed_formula, TPXZg = TPXZg))
+                        }
+  )
+  
+    eval(model_expr, envir = parent.frame())
+}
+
+
+multi_site_models = function(data, model_type, covariate = NULL) {
+  data_name = substitute(data) 
+  fixed_formula = if (!is.null(covariate)) {
+    f = as.formula(paste("yield_kg_ha ~ 1 + site + cult*seed_trt +", covariate))
+    environment(f) = baseenv()
+    f
+  } else {
+    f = as.formula("yield_kg_ha ~ 1 + site+ cult*seed_trt")
+    environment(f) = baseenv()
+    f
+  }
+  
+  dat1 = spatial_matrix(data)
+  
+       model_expr = switch(model_type,
+                      "baseline" = substitute(asreml(
+                        fixed = FIXED,
+                        random = ~ at(site):block +  at(site):wp,
+                        residual = ~dsum(~units | site),
+                        maxit = 100,
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "structured" = substitute(asreml(
+                        fixed = FIXED,
+                        random = ~ at(site):block +  at(site):wp,
+                        residual = ~dsum(~id(row):id(col) | site),
+                        maxit = 100,
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "ar1" = substitute(asreml(
+                        fixed = FIXED,
+                        random = ~ at(site):block +  at(site):wp,
+                        residual = ~dsum(~ar1(row_f):id(col_f) | site),
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "ar1_nugget" = substitute(asreml(
+                        fixed = FIXED,
+                        random = ~ at(site):block + at(site):wp + at(site):idv(units),
+                        residual = ~dsum(~ar1(row_f):id(col_f) | site),
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "ta" = substitute(asreml(
+                        fixed = update(FIXED, ~ . + at(site):lin(row_f) + at(site):lin(col_f)),
+                        random = ~ at(site):block + at(site):wp + at(site):idv(units),
+                        residual = ~dsum(~ar1(row_f):id(col_f) | site),
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "tps" = substitute(asreml(
+                        fixed = update(FIXED, ~ . + at(site):TP.CR.2 + at(site):TP.CR.3 + at(site):TP.CR.4),
+                        random = ~ at(site):block + at(site):wp + 
+                          at(site):grp(TP.C.1_frow) + at(site):grp(TP.C.2_frow) + at(site):grp(TP.R.1_fcol) + at(site):grp(TP.R.2_fcol)+ at(site):grp(TP_fcol_frow),
+                        group = DAT1_group,
+                        residual =~dsum(~id(row_f):id(col_f)|site),
+                        data = DAT1,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT1 = dat1$data, DAT1_group = dat1$grp)),
+                    )
+
+  eval(model_expr, envir = parent.frame())
+}
+
+```
+
+# 2022 Single-site Analysis
+
+This section describes the modeling workflow for the 2022 soybean field trial.
+
+```{r, include=FALSE}
+# Subset 2022 trial data and check experimental design balance
+trial_2022 = dat %>%
+  filter(year == 2022) %>%
+  droplevels()
+
+# check for imbalance
+table(trial_2022$block)
+table(trial_2022$seed_trt)
+table(trial_2022$cult)
+
+```
+
+
+### Baseline Model
+
+This model serves as a reference, assuming independent residuals and no spatial structure.
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+baseline = single_site_models(trial_2022, "baseline")
+```
+
+```{r}
+wald(baseline,  trace=FALSE)
+```
+We are not focusing on the statistical significance of individual terms at this stage. However, note the structural similarity between this model and the one below, where row and column effects are included in the residual term as a separable spatial model (`ar1(row):id(col)`). While the current model does not account for spatial correlation across the field layout, the subsequent model does. Despite this difference, both yield the same results. This current model structure corresponds to the conventional split-plot model commonly used in plant pathology field trial research.
+
+### Baseline Structured Model
+
+This is the same model as above, with the difference it accounts for physical plot layout in residuals. Residuals are independent row and column effects. This allows us with options to model correlation along rows or columns (next model).
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+structured = single_site_models(trial_2022, "structured")
+```
+
+```{r}
+wald(structured,  trace=FALSE)
+```
+Exact $P$ values and variance components are reported from the baseline model, now accounting for row and column IDs.
+
+```{r,fig.width=4, fig.height=4}
+plot(structured)
+```
+The residual diagnostic plot shows spatial trends after adjusting for fixed and random effects, while the variogram assesses the magnitude and direction of spatial correlation. Residuals should ideally appear random, without row- or column-wise patterns, indicating that the spatial structure adequately captures field heterogeneity. Some residual spatial structure remains, but the model provides a reasonable adjustment. Model fit may be further assessed using AIC and BIC.
+
+```{r,fig.width=4, fig.height=4}
+plot(asreml::varioGram(structured))
+```
+Using a separable spatial structure (e.g., `ar1(row):id(col)`) allows two-dimensional diagnostics. In a well-fitted model, the directional variogram should be relatively flat. Here, a slight downward trend from row 10 to 20 suggests residual spatial dependence that could be addressed with additional modeling.
+
+### SCN-adjusted
+
+This model incorporates plot-level SCN variability by including the log-transformed initial SCN egg count as a covariate `"resis:log_centered_initial"`. Separate coefficients are estimated for each resistance source (Peking and PI 88788), quantifying how yield responds to increasing SCN pressure and whether cultivars differ in yield loss under higher initial infestation.
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+scn_covariate = single_site_models(trial_2022, "structured", "resis:log_centered_initial")
+```
+
+```{r}
+wald(scn_covariate,  trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(scn_covariate)
+plot(asreml::varioGram(scn_covariate))
+```
+
+### Row-wise first-order autoregressive (AR1) model
+
+This model captures spatial correlation along rows, assuming correlation decays exponentially with distance.
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1 = single_site_models(trial_2022, "ar1", "resis:log_centered_initial")
+ar1 = update.asreml(ar1)
+```
+
+```{r}
+wald(ar1,  trace=FALSE)
+```
+
+
+```{r,fig.width=4, fig.height=4}
+plot(ar1)
+plot(asreml::varioGram(ar1))
+```
+
+### AR1 with independent error term (AR1 + Nugget) model
+
+An independent error term (nugget) is added to capture plot-level measurement variability or micro-scale heterogeneity.
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1_nugget = single_site_models(trial_2022, "ar1_nugget", "resis:log_centered_initial")
+ar1_nugget = update.asreml(ar1_nugget)
+```
+
+```{r}
+wald(ar1_nugget,  trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ar1_nugget)
+plot(asreml::varioGram(ar1_nugget))
+```
+
+### Trend-adjusted (TA) spatial model
+
+In this model, deterministic linear trends along rows and columns are included to account for field-scale spatial gradients.
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ta = single_site_models(trial_2022, "ta", "resis:log_centered_initial")
+ta = update.asreml(ta)
+```
+
+```{r}
+wald(ta,  trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ta)
+plot(asreml::varioGram(ta))
+```
+
+### Tensor Product P-Spline Model (TPS)
+
+Unlike previous models, this approach captures spatial variation using a flexible two-dimensional surface fit with penalized P-splines over rows and columns. This allows for smooth modeling of field-level trends without assuming a specific spatial covariance structure.
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+tps =  single_site_models(trial_2022, "tps", "resis:log_centered_initial")
+tps = update.asreml(tps)
+```
+
+```{r}
+wald(tps, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(tps)
+plot(asreml::varioGram(tps))
+```
+
+```{r,echo=FALSE}
+TPXZg_2022 = spatial_matrix(trial_2022)
+tpsfit.2022 = tpsfitted(tps, TPXZg_2022)
+```
+
+## Model Comparisons
+
+Model fit statistics are extracted for all candidate models using REML-based information criteria.
+
+```{r,echo=FALSE}
+models_2022 = list(
+  "baseline"=baseline,
+  "scn_covariate"=scn_covariate,
+  "ar1"=ar1,
+  "ar1_nugget"=ar1_nugget,
+  "ta"=ta,
+  "tps"=tps)
+
+comparison_2022 = icREML(models_2022)
+write.csv(comparison_2022, file = "results/model_selection/comparison_2022.csv", row.names = FALSE)
+```
+
+```{r,echo=FALSE}
+comparison_2022  %>%
+ pretty_kable()
+```   
+
+The 2022 model fit improves with spatial complexity. TPS captures spatial heterogeneity most effectively, enhancing model accuracy over spatial and non-spatial approaches, based on AIC but not on BIC.
+
+## Seed Treatment Effects
+
+This section extracts and summarizes the estimated contrasts for seed treatment effects from all models fitted to 2022 data. The contrasts quantify differences in yield between seed treatments, with confidence intervals and standard errors.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+seed_trt=purrr::map2_dfr(
+  models_2022, names(models_2022),
+  ~ st_contrasts(.x, transf=FALSE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast ) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error) %>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(seed_trt, file ="results/seed_trt/seed_trt_2022.csv", row.names = FALSE)
+
+eff_st_2022 = purrr::map2_dfr(
+  models_2022, names(models_2022),
+  ~ st_contrasts(.x, transf=FALSE)$var_contrast   %>%
+      mutate(Model = .y)) 
+```
+
+```{r,echo=FALSE}
+seed_trt  %>%
+ pretty_kable()
+```
+Only the estimated $\overline{D}$ (see manuscript for reference) for the TPS model was reported in the Results section but here and in the supplementary materials, we include the estimates for all models for comparison. The baseline model, representing the traditional split-plot design model, has $\overline{D} = 199.4$, while the TPS model has $\overline{D} = 195.1$. The precision (standard error) are relatively consistent across all models. As a side note, this comparison is at the sub-plot level.
+
+## Cultivar and Interaction Comparisons
+
+Similarly, cultivar effects are compared across models, focusing on differences in yield among soybean cultivars with different resistance sources.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+cult = purrr::map2_dfr(
+  models_2022, names(models_2022),
+  ~ cult_contrasts_ss(.x,year= 2022, transf=FALSE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error)%>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(cult, file ="results/cult_int/cult_int_2022.csv", row.names = FALSE)
+
+
+eff_cult_2022 = purrr::map2_dfr(
+  models_2022, names(models_2022),
+  ~ cult_contrasts_ss(.x,year= 2022, transf=FALSE)$var_contrast   %>%
+      mutate(Model = .y)) 
+```
+
+```{r,echo=FALSE}
+cult  %>%
+ pretty_kable()
+```
+We stick with the TPS model because it had the lowest ajusted AIC but discuss the results of other models for comparison. The contrasts comparing Peking versus PI88788 resistance sources show wide variation in estimates across models, ranging from -60.9 to 34.3, with all confidence intervals overlapping zero. This indicates that Peking did not improve yield, relative to PI88788, in 2022.
+
+In contrast, the resistance × seed treatment interaction (Peking + Base vs. PI 88788 + Fluopyram) consistently shows negative estimates. 
+For this site, the baseline model suggests marginal statistical significance. Spatial models yield a wide confidence intervals that include zero, reflecting increased uncertainty. For reference using the TPS model, Base + Peking yields ~173 kg ha⁻¹ less than Fluopyram + PI 88788, but it is not statistically significant.
+
+
+## Variance Components
+
+Variance components for each model are extracted to highlight sources of variation (e.g., block, residual, spatial effects). This provides insight into how much variation each model attributes to different experimental factors.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+
+var_table = imap_dfr(models_2022, ~ extract_varcomps(.x) %>%
+                        mutate(Model = .y)) %>%
+  dplyr::select(Component, Model, Formatted) %>%
+  pivot_wider(names_from = Model, values_from = Formatted)
+
+write.csv(var_table, file ="results/variances/var_table_2022.csv", row.names = FALSE)
+
+
+eff_2022 = purrr::map2_dfr(
+  models_2022, names(models_2022),
+  ~ st_contrasts(.x, transf=FALSE)$var_contrast   %>%
+      mutate(Model = .y)) 
+```
+
+```{r,echo=FALSE}
+var_table  %>%
+ pretty_kable()
+
+```  
+
+
+## Coeficient of Damage 
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+coef_damage = purrr::imap_dfr(models_2022[names(models_2022) != "baseline"], ~ extract_logSCN_effect(.x) %>% mutate(Model = .y)) %>% relocate(Model,.before = Resistance)
+
+write.csv(coef_damage, file = "results/damage/coef_damage_2022.csv", row.names = FALSE)
+
+coef_damage %>%
+ pretty_kable()
+```
+Across models, damage estimates varied, with Peking ranging from +0.2% to –1.4% and PI 88788 from –0.8% to –2%, showing negative but moderate effects for PI 88788. 
+
+
+# 2023 Single-site Analysis
+
+We do not discuss these results in detail, but the interpretation follows the same rationale above.
+
+```{r, include=FALSE}
+# Subset 2023 trial data and check experimental design balance
+trial_2023 = dat %>%
+  filter(year == 2023) %>%
+  droplevels()
+
+# check for imbalance
+table(trial_2023$block)
+table(trial_2023$seed_trt)
+table(trial_2023$cult)
+
+```
+
+
+### Baseline Model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+baseline = single_site_models(trial_2023, "baseline")
+```
+
+```{r}
+wald(baseline,  trace=FALSE)
+```
+
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+structured = single_site_models(trial_2023, "structured")
+```
+
+```{r}
+wald(structured,  trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(structured)
+plot(asreml::varioGram(structured))
+```
+
+### SCN-adjusted
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+scn_covariate = single_site_models(trial_2023, "structured", "resis:log_centered_initial")
+```
+
+```{r}
+wald(scn_covariate,  trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(scn_covariate)
+plot(asreml::varioGram(scn_covariate))
+```
+
+### Row-wise first-order autoregressive (AR1) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1 = single_site_models(trial_2023, "ar1", "resis:log_centered_initial")
+ar1 = update.asreml(ar1)
+```
+
+```{r}
+wald(ar1,  trace=FALSE)
+```
+
+
+```{r,fig.width=4, fig.height=4}
+plot(ar1)
+plot(asreml::varioGram(ar1))
+```
+
+### AR1 with independent error term (AR1 + Nugget) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1_nugget = single_site_models(trial_2023, "ar1_nugget", "resis:log_centered_initial")
+ar1_nugget = update.asreml(ar1_nugget)
+```
+
+```{r}
+wald(ar1_nugget,  trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ar1_nugget)
+plot(asreml::varioGram(ar1_nugget))
+```
+
+### Trend-adjusted (TA) spatial model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ta = single_site_models(trial_2023, "ta", "resis:log_centered_initial")
+ta = update.asreml(ta)
+```
+
+```{r}
+wald(ta,  trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ta)
+plot(asreml::varioGram(ta))
+```
+
+### Tensor Product P-Spline Model (TPS
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+tps =  single_site_models(trial_2023, "tps", "resis:log_centered_initial")
+tps = update.asreml(tps)
+```
+
+```{r}
+wald(tps,  trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(tps)
+plot(asreml::varioGram(tps))
+```
+
+```{r,echo=FALSE}
+TPXZg_2023 = spatial_matrix(trial_2023)
+tpsfit.2023 = tpsfitted(tps, TPXZg_2023)
+```
+
+## Model Comparisons
+```{r,echo=FALSE}
+models_2023 = list(
+  "baseline"=baseline,
+  "scn_covariate"=scn_covariate,
+  "ar1"=ar1,
+  "ar1_nugget"=ar1_nugget,
+  "ta"=ta,
+  "tps"=tps)
+
+comparison_2023 = icREML(models_2023)
+write.csv(comparison_2023, file = "results/model_selection/comparison_2023.csv", row.names = FALSE)
+```
+
+```{r,echo=FALSE}
+comparison_2023  %>%
+ pretty_kable()
+```   
+
+## Seed Treatment Effects
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+seed_trt=purrr::map2_dfr(
+  models_2023, names(models_2023),
+  ~ st_contrasts(.x, transf=FALSE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast ) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error)%>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(seed_trt, file ="results/seed_trt/seed_trt_2023.csv", row.names = FALSE)
+
+eff_st_2023 = purrr::map2_dfr(
+  models_2023, names(models_2023),
+  ~ st_contrasts(.x, transf=FALSE)$var_contrast   %>%
+      mutate(Model = .y)) 
+
+```
+
+```{r,echo=FALSE}
+seed_trt  %>%
+ pretty_kable() 
+
+```
+
+## Cultivar and Interaction Comparisons
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+cult = purrr::map2_dfr(
+  models_2023, names(models_2023),
+  ~ cult_contrasts_ss(.x,year= 2023, transf=FALSE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error)%>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(cult, file ="results/cult_int/cult_int_2023.csv", row.names = FALSE)
+
+eff_cult_2023 = purrr::map2_dfr(
+  models_2023, names(models_2023),
+  ~ cult_contrasts_ss(.x,year= 2023, transf=FALSE)$var_contrast   %>%
+      mutate(Model = .y)) 
+
+```
+
+```{r,echo=FALSE}
+cult  %>%
+ pretty_kable()
+```
+
+## Variance Components
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+var_table = imap_dfr(models_2023, ~ extract_varcomps(.x) %>%
+                        mutate(Model = .y)) %>%
+  dplyr::select(Component, Model, Formatted) %>%
+  pivot_wider(names_from = Model, values_from = Formatted)
+
+write.csv(var_table, file = "results/variances/var_table_2023.csv", row.names = FALSE)
+```
+
+```{r,echo=FALSE}
+var_table  %>%
+ pretty_kable()
+
+```  
+
+
+## Coeficient of Damage 
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+coef_damage = purrr::imap_dfr(models_2023[names(models_2023) != "baseline"], ~ extract_logSCN_effect(.x) %>% mutate(Model = .y)) %>% relocate(Model,.before = Resistance)
+
+write.csv(coef_damage, file = "results/damage/coef_damage_2023.csv", row.names = FALSE)
+
+coef_damage %>%
+ pretty_kable()
+
+```
+
+
+
+# Multi-site Analysis
+
+We evaluated six multi-site linear mixed models to estimate the effects of cultivar resistance and fluopyram seed treatment on soybean yield under variable SCN pressure across two environments.
+
+```{r, include=FALSE}
+# Verify experimental design balance across locations
+table(dat$block,dat$year)
+table(dat$cult,dat$year)
+table(dat$seed_trt,dat$year)
+```
+
+```{r}
+# Check for rank deficiencies
+model_matrix = model.matrix(~ site*seed_trt*cult, data = dat)
+qr_mm = qr(model_matrix)
+rank_deficiency = ncol(model_matrix) - qr_mm$rank;rank_deficiency # Should be 0 ideally
+```
+There is unbalance in the dataset.
+
+### Baseline Model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+baseline = multi_site_models(dat, "baseline")
+
+baseline = update.asreml(baseline)
+baseline = update.asreml(baseline)
+```
+
+```{r}
+wald(baseline,  trace=FALSE)
+```
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+structured = multi_site_models(dat, "structured")
+
+structured = update.asreml(structured)
+structured = update.asreml(structured)
+```
+
+```{r}
+wald(structured,  trace=FALSE)
+```
+
+
+### SCN-adjusted
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+scn_covariate = multi_site_models(dat, "structured", "resis:log_centered_initial")
+
+scn_covariate = update.asreml(scn_covariate)
+scn_covariate = update.asreml(scn_covariate)
+```
+
+```{r}
+wald(scn_covariate,  trace=FALSE)
+```
+
+
+### Row-wise first-order autoregressive (AR1) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1 = multi_site_models(dat, "ar1", "resis:log_centered_initial")
+
+ar1 = update.asreml(ar1)
+ar1 = update.asreml(ar1)
+```
+
+```{r}
+wald(ar1,  trace=FALSE)
+```
+
+
+### AR1 with independent error term (AR1 + Nugget) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1_nugget = multi_site_models(dat, "ar1_nugget", "resis:log_centered_initial")
+
+ar1_nugget = update.asreml(ar1_nugget)
+ar1_nugget = update.asreml(ar1_nugget)
+```
+
+```{r}
+wald(ar1_nugget,  trace=FALSE)
+```
+
+
+### Trend-adjusted (TA) spatial model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ta = multi_site_models(dat, "ta", "resis:log_centered_initial")
+
+ta = update.asreml(ta)
+ta = update.asreml(ta)
+ta = update.asreml(ta)
+```
+
+```{r}
+wald(ta,  trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ta)
+plot(asreml::varioGram(ta))
+```
+
+### Tensor Product P-Spline Model (TPS)
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+tps =  multi_site_models(dat, "tps", "resis:log_centered_initial")
+
+tps = update.asreml(tps)
+tps = update.asreml(tps)
+tps = update.asreml(tps)
+
+mean(dat$SCN_initial)
+coef(tps)$fixed
+```
+
+```{r}
+wald(tps,  trace=FALSE)
+```
+
+
+## Model Comparisons
+
+```{r,echo=FALSE}
+models_multi = list(
+  "baseline"=baseline,
+  "scn_covariate"=scn_covariate,
+  "ar1"=ar1,
+  "ar1_nugget"=ar1_nugget,
+  "ta"=ta,
+  "tps"=tps)
+
+comparison_multi = icREML(models_multi)
+write.csv(comparison_multi, file = "results/model_selection/comparison_multi.csv", row.names = FALSE)
+```
+
+```{r,echo=FALSE}
+comparison_multi  %>%
+ pretty_kable()
+```   
+
+## Seed Treatment Effect
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+seed_trt=purrr::map2_dfr(
+  models_multi, names(models_multi),
+  ~ st_contrasts(.x, transf=FALSE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast ) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error) %>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(seed_trt, file = "results/seed_trt/seed_trt_multi.csv", row.names = FALSE)
+
+eff_st_multi = purrr::map2_dfr(
+  models_multi, names(models_multi),
+  ~ st_contrasts(.x, transf=FALSE)$var_contrast  %>%
+      mutate(Model = .y))
+```
+
+```{r,echo=FALSE}
+seed_trt %>%
+ pretty_kable()
+
+```
+
+## Cultivar and Interaction Comparisons
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+  cult = purrr::map2_dfr(
+    models_multi, names(models_multi),
+    ~ cult_contrasts_ms(.x,transf=FALSE)$contrast %>%
+        mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast) %>%
+    relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error) %>%
+    relocate(Reference,.before =predicted.value)
+  
+  write.csv(cult, file ="results/cult_int/cult_int_multi.csv", row.names = FALSE)
+  
+  eff_cult_multi = purrr::map2_dfr(
+    models_multi, names(models_multi),
+    ~ cult_contrasts_ms(.x, transf=FALSE)$var_contrast   %>%
+        mutate(Model = .y)) 
+```
+
+```{r,echo=FALSE}
+cult  %>%
+ pretty_kable()
+```
+
+## Variance Components
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+var_table = imap_dfr(models_multi, ~ extract_varcomps(.x) %>%
+                        mutate(Model = .y)) %>%
+  dplyr::select(Component, Model, Formatted) %>%
+  pivot_wider(names_from = Model, values_from = Formatted)
+
+write.csv(var_table, file = "results/variances/var_table_multi.csv", row.names = FALSE)
+
+```
+
+```{r,echo=FALSE}
+var_table  %>%
+ pretty_kable()
+```  
+
+## Coeficient of Damage 
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+coef_damage = purrr::imap_dfr(models_multi[names(models_multi) != "baseline"], ~ extract_logSCN_effect(.x) %>% mutate(Model = .y)) %>% relocate(Model,.before = Resistance)
+
+write.csv(coef_damage, file ="results/damage/coef_damage_multi.csv", row.names = FALSE)
+
+coef_damage %>%
+ pretty_kable()
+
+```
+
+## Total Trend
+
+```{r,echo=FALSE,fig.width=10,fig.height=5}
+
+nbreaks = 12
+max_val = max(dat$yield_kg_ha,na.rm = T)
+min_val = min(dat$yield_kg_ha,na.rm = T)
+contours = list(breaks = round(seq(min_val, max_val, length.out = nbreaks),0))
+  
+tpsfit.2022$year = 2022
+tpsfit.2023$year = 2023
+trend_data = rbind(tpsfit.2022, tpsfit.2023)
+
+dat = left_join(dat,trend_data)
+
+outer = dat %>% 
+  group_by(year) %>% 
+  summarise(
+    xmin = min(col) ,
+    xmax = max(col),
+    ymin = min(row),
+    ymax = max(row),
+    .groups = "drop"
+  )
+
+yield=ggplot(dat, aes(y = row, x = col, z = yield_kg_ha)) +
+      geom_contour_filled(breaks = contours$breaks, alpha = 0.9) +
+        scale_fill_manual(
+          values = cc, 
+          name = expression(atop("Observed yield", paste("(kg ", ha^{-1}, ")"))),
+          drop = FALSE
+        ) +
+      facet_grid(~year) +
+      scale_y_continuous(breaks = c(1, 5, 10, 15, 20, 24)) +
+      labs(x = "Column ID", y = "Row ID") +
+  geom_rect(
+    data = outer,
+    aes(xmin = 1, xmax = xmax, ymin = 1, ymax = ymax),
+    inherit.aes = FALSE,
+    fill = NA,
+    color = "black",
+    linewidth = 0.8
+  )+
+   geom_tile(data = tile_data, aes(x = col, y = row), 
+            fill = NA, color = "black", linewidth = 0.2, 
+            inherit.aes = FALSE) 
+  
+
+max_trend = 1200
+min_trend = -1500
+trend_breaks = seq(min_trend, max_trend, length.out = nbreaks)
+contours_trend = list(breaks =round( trend_breaks,0))
+
+
+trend = dat %>%
+  ggplot(aes(y = row, x = col, z = total)) +
+  geom_contour_filled(breaks = contours_trend$breaks, alpha = 0.9) +
+  scale_fill_manual(
+    values = cc, 
+    name = expression(atop("Fitted spatial trend", paste("for yield (kg ", ha^{-1}, ")"))),
+    drop = FALSE
+  ) +
+  scale_y_continuous(breaks = c(1, 5, 10, 15, 20, 24)) +
+  facet_grid(~year) +
+  labs(x = "Column ID", y = "Row ID") +
+    geom_rect(
+    data = outer,
+    aes(xmin = 1, xmax = xmax, ymin = 1, ymax = ymax),
+    inherit.aes = FALSE,
+    fill = NA,
+    color = "black",
+    linewidth = 0.8
+  )+
+   geom_tile(data = tile_data, aes(x = col, y = row), 
+            fill = NA, color = "black", linewidth = 0.2, 
+            inherit.aes = FALSE) 
+
+yield + trend + plot_annotation(tag_levels = 'A') 
+
+ggsave("results/fig_2.tiff", units = "in", width = 8.3, height = 5)
+
+```
+**Figure 4**. Spatial patterns of soybean yield and spatial trends across two growing seasons (2022 and 2023). Panel **A** shows observed yield (kg ha⁻¹) across the field layout, with columns and rows representing the experimental grid. Panel **B** displays the thin plate spline (TPS) yield trend (kg ha⁻¹), representing spatial variation. Both panels use filled contour plots with consistent color scales to visualize spatial patterns, with black grid lines indicating individual plot boundaries and outer rectangles marking the field boundaries for each year.
+
+## Efficiency plot
+
+```{r,echo=FALSE,fig.width=8}
+
+eff_data = rbind(eff_st_multi, eff_cult_multi) %>%
+  group_by(Contrast) %>%
+  mutate(
+    baseline_var = var[Model == "baseline"],
+    Relative_Efficiency = (baseline_var / var - 1) * 100
+  ) %>%
+  ungroup() %>%
+  mutate(Model = factor(Model, levels = unique(Model))) %>%
+  filter(Model != "baseline") %>%
+  mutate(
+    Model = factor(Model, levels = c("scn_covariate", "ar1", "ar1_nugget", "ta", "tps"),
+                   labels = c("SCN-adjusted", "AR1", "AR1 + nugget", "TA", "TPS"))
+  ) %>%
+  mutate(
+    Comparison = case_when(
+      str_detect(Contrast, "Fluopyram vs Base") ~ "Fluopyram vs. base (sub-plot contrast)",
+      str_detect(Contrast, "Peking vs PI88788") ~ "Peking vs. PI 88788 (whole-plot contrast)",
+      str_detect(Contrast, "Peking \\+ Base vs PI88788 \\+ Fluopyram") ~ "Peking + base vs. PI 88788 + fluopyram (sub-plot contrast)",
+      TRUE ~ NA_character_
+    )
+  )
+  
+  
+ggplot(eff_data, aes(x = Model, y = Relative_Efficiency, group = Comparison, linetype = Comparison)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2.5) +
+  geom_label_repel( aes(label = round(Relative_Efficiency, 1)), size = 3.2,box.padding = 0.3, position = position_dodge2(width = 0.05), segment.color = 'grey50') +
+    scale_y_continuous(
+    "Gain in precision relative to baseline model (%)",
+    limits = c(0, 50),
+    expand = expansion(mult = c(0, 0.1))
+  ) +
+  labs(
+    x = "Model", linetype = "Comparison",y = "Gain in precision relative to baseline model (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom")+
+  guides(
+    linetype = guide_legend(nrow = 3, byrow = TRUE, title.position = "top")
+  )
+
+
+ggsave("results/fig_4.tiff", units = "in", width = 7, height = 7)
+
+```
+**Figure 4**. Relative efficiency of different spatial models compared to a baseline model for estimating treatment contrasts. The y-axis shows the percentage gain in precision relative to the baseline model. Three treatment contrasts are shown: Fluopyram vs. base (sub-plot contrast), Peking vs. PI 88788 (whole-plot contrast), and Peking + base vs. PI 88788 + fluopyram (sub-plot contrast). Five spatial models were evaluated: SCN-adjusted, AR1, AR1 + nugget, TA, and TPS.
+
+```{r}
+summary(baseline$residuals)
+summary(tps$residuals)
+```
+
+
+
+```{r}
+sessionInfo()
+```
+

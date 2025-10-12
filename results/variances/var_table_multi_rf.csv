@@ -1,0 +1,21 @@
+"Component","baseline","ar1","ar1_nugget","ta","tps"
+"at(site, '1'):block","0.16 (0.10)","0.15 (0.10)","0.10 (0.11)","0.14 (0.10)","0.00 (0.02)"
+"at(site, '2'):block","0.41 (0.26)","0.43 (0.26)","0.27 (0.29)","0.20 (0.18)","0.12 (0.14)"
+"at(site, '1'):wp","0.03 (0.04)","0.00 (NA)","0.00 (NA)","0.00 (NA)","0.00 (NA)"
+"at(site, '2'):wp","0.00 (NA)","0.00 (NA)","0.00 (NA)","0.00 (NA)","0.00 (NA)"
+"site_1!R","0.20 (0.05)","0.24 (0.05)","0.13 (0.12)","0.00 (NA)","0.18 (0.04)"
+"site_2!R","0.81 (0.13)","0.80 (0.12)","0.40 (0.45)","0.00 (NA)","0.67 (0.11)"
+"site_1!row_f!cor",NA,"0.17 (0.14)","0.85 (0.22)","0.90 (NA)",NA
+"site_2!row_f!cor",NA,"-0.08 (0.11)","0.96 (NA)","0.65 (NA)",NA
+"at(site, '1'):units!units",NA,NA,"0.17 (0.05)","0.22 (0.04)",NA
+"at(site, '2'):units!units",NA,NA,"0.73 (0.13)","0.83 (0.13)",NA
+"at(site, '1'):grp(TP.R.1_fcol)",NA,NA,NA,NA,"0.00 (NA)"
+"at(site, '2'):grp(TP.R.1_fcol)",NA,NA,NA,NA,"0.00 (NA)"
+"at(site, '1'):grp(TP.R.2_fcol)",NA,NA,NA,NA,"0.00 (NA)"
+"at(site, '2'):grp(TP.R.2_fcol)",NA,NA,NA,NA,"0.00 (NA)"
+"at(site, '1'):grp(TP.C.1_frow)",NA,NA,NA,NA,"0.00 (0.02)"
+"at(site, '2'):grp(TP.C.1_frow)",NA,NA,NA,NA,"0.00 (NA)"
+"at(site, '1'):grp(TP.C.2_frow)",NA,NA,NA,NA,"0.02 (NA)"
+"at(site, '2'):grp(TP.C.2_frow)",NA,NA,NA,NA,"0.07 (NA)"
+"at(site, '1'):grp(TP_fcol_frow)",NA,NA,NA,NA,"1.18 (0.97)"
+"at(site, '2'):grp(TP_fcol_frow)",NA,NA,NA,NA,"0.96 (1.25)"

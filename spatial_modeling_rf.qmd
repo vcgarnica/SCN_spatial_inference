@@ -1,0 +1,906 @@
+---
+title: "Field evaluation of integrated soybean cyst nematode management using spatially informed mixed models - Part 2"
+author: "Vinicius Garnica"
+date: "`r Sys.Date()`"
+format:
+  html:
+    self-contained: true
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    code-line-numbers: true
+editor_options: 
+  chunk_output_type: console
+---
+
+[GitHub Repository](https://github.com/vcgarnica/SCN_spatial_inference)  
+
+This file contains the full R workflow for processing and analyzing raw data, as well as generating figures for the manuscript. The Rmarkdown file can be downloaded from the *Code* drop down menu (top right).
+
+#### Load packages and dataset {-}
+
+```{r setup, echo=FALSE}
+# Global setup - runs once at beginning
+knitr::opts_chunk$set(
+  echo = TRUE,          
+  warning = FALSE,      
+  message = FALSE,      
+  fig.align = "center", 
+  fig.width = 8,        
+  fig.height = 6        
+)
+```
+
+```{r}
+
+required_packages = c(
+  "tidyverse",    # Data manipulation and visualization
+  "asreml",       # Mixed modeling
+  "asremlPlus",   # Model diagnostics
+  "kableExtra",   # Table formatting
+  "patchwork",    # Plot arrangement
+  "TPSbits"      # Tensor spline modeling
+)
+
+invisible(lapply(required_packages, library, character.only = TRUE))
+
+asreml.options(gammaPar = TRUE)
+theme_set(theme_minimal(base_size = 12))
+
+source("functions.r")
+
+tile_data = expand.grid(
+  col = c(1.375, 2.125, 2.875, 3.625),  
+  row = c(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 
+          11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 
+          21.5, 22.5, 23.5),  # Adjusted row positions
+  year = c(2022, 2023)
+) %>%
+  filter(!((year == 2022) & (row > 19.5)))
+
+cc = c(
+  "#0d5016",    # Dark green
+  "#1a7025", 
+  "#2d9034", 
+  "#4fb043",
+  "#7dd052",    
+  "#aee661",
+  "#d4f670",    
+  "#fff47f",    
+  "#ffcc5e", 
+  "#ffa43d",
+  "#ff7c1c",
+  "#ff5500")  # Bright red
+
+```
+
+
+```{r}
+dat = read_csv("pioneers.csv", show_col_types = FALSE)
+
+dat = dat %>%
+  mutate(
+      trt = factor(as.numeric(interaction(cult, seed_trt, sep = ":"))),
+      wp = factor(as.numeric(interaction(cult, block, sep = ":"))),
+      across(c(location, block, site, trt, plot, cult, resis, seed_trt), as.factor),
+      row_f = factor(row),
+      col_f = factor(col),
+      SCN_rf = log(SCN_final/SCN_initial)
+    ) %>%
+    relocate(trt, .before = cult) %>% 
+    arrange(site, row, col) %>% 
+    na.omit() %>%
+    droplevels() %>%
+    mutate(seed_trt = recode(seed_trt, "ILeVO" = "Fluopyram"),
+           seed_trt = recode(seed_trt, "BASE" = "Base"),
+           seed_trt = factor(seed_trt, levels = c("Base", "Fluopyram")))
+
+dat %>%
+  group_by(seed_trt) %>%
+  skimr::skim() 
+
+
+```
+
+## Statistical analyses {.unnumbered}
+
+```{r}
+
+single_site_models = function(data, model_type) {
+  data_name = substitute(data) 
+  
+  fixed_formula = as.formula("SCN_rf ~ 1 + site + cult * seed_trt")
+  environment(fixed_formula) = baseenv()
+  
+  model_expr = switch(model_type,
+                       "baseline" = substitute(asreml(
+                         fixed = FIXED,
+                         random = ~ block + wp,
+                         residual = ~ units,
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                       "structured" = substitute(asreml(
+                         fixed = FIXED,
+                         random = ~ block + wp,
+                         residual = ~ id(row_f):id(col_f),
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                       "ar1" = substitute(asreml(
+                         fixed = FIXED,
+                         random = ~ block + wp,
+                         residual = ~ ar1(row_f):id(col_f),
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                       "ar1_nugget" = substitute(asreml(
+                         fixed = FIXED,
+                         random = ~ block + wp + idv(units),
+                         residual = ~ ar1(row_f):id(col_f),
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                       "ta" = substitute(asreml(
+                         fixed = update(FIXED, ~ . + lin(row_f) + lin(col_f)),
+                         random = ~ block + wp + idv(units),
+                         residual = ~ ar1(row_f):id(col_f),
+                         data = DAT,
+                         na.action = na.method(x = "include", y = "include")
+                       ), list(FIXED = fixed_formula, DAT = data_name)),
+                       
+                      "tps" = {
+                         nseg = c(length(unique(data[["col"]])), length(unique(data[["row"]])) / 2)
+                         TPXZg = tpsmmb("col", "row", data, stub = "1", nsegments = nseg,
+                                         asreml = "grp", eigenvalues = TRUE)
+                          
+                         substitute(asreml(
+                         fixed = update(FIXED, ~ . + TP.CR.2 + TP.CR.3 + TP.CR.4),
+                         random = ~ block + wp + 
+                           grp(TP.C.1_frow) + grp(TP.C.2_frow) + grp(TP.R.1_fcol) + grp(TP.R.2_fcol)+ grp(TP_fcol_frow),
+                         group = TPXZg$grp,
+                         residual = ~ id(row_f):id(col_f),
+                         data = TPXZg$data,
+                         na.action = na.method(x = "include", y = "include")
+                          ), list(FIXED = fixed_formula, TPXZg = TPXZg))
+                        }
+  )
+  
+    eval(model_expr, envir = parent.frame())
+}
+
+
+multi_site_models = function(data, model_type) {
+  data_name = substitute(data) 
+  
+  fixed_formula = as.formula("SCN_rf ~ 1 + site + cult * seed_trt")
+  environment(fixed_formula) = baseenv()
+
+  dat1 = spatial_matrix(data)
+  
+       model_expr = switch(model_type,
+                      "baseline" = substitute(asreml(
+                        fixed = FIXED,
+                        random = ~ at(site):block + at(site):wp,
+                        residual = ~dsum(~units | site),
+                        maxit = 100,
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "structured" = substitute(asreml(
+                        fixed = FIXED,
+                        random = ~ at(site):block + at(site):wp,
+                        residual = ~dsum(~id(row):id(col) | site),
+                        maxit = 100,
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "ar1" = substitute(asreml(
+                        fixed = FIXED,
+                        random = ~ at(site):block + at(site):wp,
+                        residual = ~dsum(~ar1(row_f):id(col_f) | site),
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "ar1_nugget" = substitute(asreml(
+                        fixed = FIXED,
+                        random = ~ at(site):block + at(site):wp + at(site):idv(units),
+                        residual = ~dsum(~ar1(row_f):id(col_f) | site),
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "ta" = substitute(asreml(
+                        fixed = update(FIXED, ~ . + at(site):lin(row_f) + at(site):lin(col_f)),
+                        random = ~ at(site):block + at(site):wp + at(site):idv(units),
+                        residual = ~dsum(~ar1(row_f):id(col_f) | site),
+                        data = DAT,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT = data_name)),
+                  
+                      "tps" = substitute(asreml(
+                        fixed = update(FIXED, ~ . + at(site):TP.CR.2 + at(site):TP.CR.3 + at(site):TP.CR.4),
+                        random = ~ at(site):block+at(site):wp + 
+                          at(site):grp(TP.C.1_frow) + at(site):grp(TP.C.2_frow) + at(site):grp(TP.R.1_fcol) + at(site):grp(TP.R.2_fcol)+ at(site):grp(TP_fcol_frow),
+                        group = DAT1_group,
+                        residual =~dsum(~id(row_f):id(col_f)|site),
+                        data = DAT1,
+                        na.action = na.method(x = "include", y = "include")
+                      ), list(FIXED = fixed_formula, DAT1 = dat1$data, DAT1_group = dat1$grp)),
+                    )
+
+  eval(model_expr, envir = parent.frame())
+}
+
+```
+
+
+# 2022 Single-site Analysis
+
+```{r, include=FALSE}
+# Subset 2022 trial data and check experimental design balance
+trial_2022 = dat %>%
+  filter(year == 2022) %>%
+  droplevels()
+
+# check for imbalance
+table(trial_2022$block)
+table(trial_2022$seed_trt)
+table(trial_2022$cult)
+```
+
+
+### Baseline Model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+baseline = single_site_models(trial_2022, "baseline")
+```
+
+```{r}
+wald(baseline, trace=FALSE)
+```
+
+### Baseline Strucuted Model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+structured = single_site_models(trial_2022, "structured")
+```
+
+```{r}
+wald(structured, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(structured)
+plot(asreml::varioGram(structured))
+```
+
+
+### Row-wise first-order autoregressive (AR1) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1 = single_site_models(trial_2022, "ar1")
+ar1 = update.asreml(ar1)
+```
+
+```{r}
+wald(ar1, trace=FALSE)
+```
+
+
+```{r,fig.width=4, fig.height=4}
+plot(ar1)
+plot(asreml::varioGram(ar1))
+```
+
+### AR1 with independent error term (AR1 + Nugget) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1_nugget = single_site_models(trial_2022, "ar1_nugget")
+ar1_nugget = update.asreml(ar1_nugget)
+```
+
+```{r}
+wald(ar1_nugget, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ar1_nugget)
+plot(asreml::varioGram(ar1_nugget))
+```
+
+### Trend-adjusted (TA) spatial model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ta = single_site_models(trial_2022, "ta")
+
+ta = update.asreml(ta)
+ta = update.asreml(ta)
+ta = update.asreml(ta)
+```
+
+```{r}
+wald(ta, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ta)
+plot(asreml::varioGram(ta))
+```
+
+### Tensor Product P-Spline Model (TPS)
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+tps =  single_site_models(trial_2022, "tps")
+
+tps = update.asreml(tps)
+tps = update.asreml(tps)
+tps = update.asreml(tps)
+```
+
+```{r}
+wald(tps, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(tps)
+plot(asreml::varioGram(tps))
+```
+
+```{r,echo=FALSE}
+TPXZg_2022 = spatial_matrix(trial_2022)
+tpsfit.2022 = tpsfitted(tps, TPXZg_2022)
+```
+
+
+## Model Comparisons
+```{r,echo=FALSE}
+models_2022 = list(
+  "baseline"=baseline,
+  "ar1"=ar1,
+  "ar1_nugget"=ar1_nugget,
+  "ta"=ta,
+  "tps"=tps)
+
+comparison_2022 = icREML(models_2022)
+write.csv(comparison_2022, file = "results/model_selection/comparison_2022_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+comparison_2022  %>%
+ pretty_kable()
+
+```   
+
+## Seed Treatment Comparisons
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+seed_trt=purrr::map2_dfr(
+  models_2022, names(models_2022),
+  ~ st_contrasts(.x, transf=TRUE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast ) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error)%>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(seed_trt, file = "results/seed_trt/seed_trt_2022_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+seed_trt  %>%
+ pretty_kable()
+
+```
+
+## Cultivar and Interaction Comparisons
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+cult = purrr::map2_dfr(
+  models_2022, names(models_2022),
+  ~ cult_contrasts_ss(.x,year= 2022, transf=TRUE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error)%>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(cult, file = "results/cult_int/cult_int_2022_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+cult  %>%
+ pretty_kable()
+```
+
+## Variance Components
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+
+var_table = imap_dfr(models_2022, ~ extract_varcomps(.x) %>%
+                        mutate(Model = .y)) %>%
+  dplyr::select(Component, Model, Formatted) %>%
+  pivot_wider(names_from = Model, values_from = Formatted)
+
+write.csv(var_table, file =  "results/variances/var_table_2022_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+var_table  %>%
+ pretty_kable()
+```  
+
+
+# 2023 Single-site Analysis
+
+```{r, include=FALSE}
+# Subset 2023 trial data and check experimental design balance
+trial_2023 = dat %>%
+  filter(year == 2023) %>%
+  droplevels()
+
+# check for imbalance
+table(trial_2023$block)
+table(trial_2023$seed_trt)
+table(trial_2023$cult)
+
+```
+
+
+### Baseline Model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+baseline = single_site_models(trial_2023, "baseline")
+```
+
+```{r}
+wald(baseline, trace=FALSE)
+```
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+structured = single_site_models(trial_2023, "structured")
+```
+
+```{r}
+wald(structured, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(structured)
+plot(asreml::varioGram(structured))
+```
+
+### Row-wise first-order autoregressive (AR1) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1 = single_site_models(trial_2023, "ar1")
+
+ar1 = update.asreml(ar1)
+ar1 = update.asreml(ar1)
+```
+
+```{r}
+wald(ar1, trace=FALSE)
+```
+
+
+```{r,fig.width=4, fig.height=4}
+plot(ar1)
+plot(asreml::varioGram(ar1))
+```
+
+### AR1 with independent error term (AR1 + Nugget) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1_nugget = single_site_models(trial_2023, "ar1_nugget")
+ar1_nugget = update.asreml(ar1_nugget)
+ar1_nugget = update.asreml(ar1_nugget)
+ar1_nugget = update.asreml(ar1_nugget)
+ar1_nugget = update.asreml(ar1_nugget)
+ar1_nugget = update.asreml(ar1_nugget)
+ar1_nugget = update.asreml(ar1_nugget)
+```
+
+```{r}
+wald(ar1_nugget, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ar1_nugget)
+plot(asreml::varioGram(ar1_nugget))
+```
+
+### Trend-adjusted (TA) spatial model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ta = single_site_models(trial_2023, "ta")
+ta = update.asreml(ta)
+ta = update.asreml(ta)
+ta = update.asreml(ta)
+```
+
+```{r}
+wald(ta, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ta)
+plot(asreml::varioGram(ta))
+```
+
+### Tensor Product P-Spline Model (TPS)
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+tps =  single_site_models(trial_2023, "tps")
+tps = update.asreml(tps)
+```
+
+```{r}
+wald(tps, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(tps)
+plot(asreml::varioGram(tps))
+```
+
+```{r,echo=FALSE}
+TPXZg_2023 = spatial_matrix(trial_2023)
+tpsfit.2023 = tpsfitted(tps, TPXZg_2023)
+```
+
+
+## Model Comparisons
+```{r,echo=FALSE}
+models_2023 = list(
+  "baseline"=baseline,
+  "ar1"=ar1,
+  "ar1_nugget"=ar1_nugget,
+  "ta"=ta,
+  "tps"=tps)
+
+comparison_2023 = icREML(models_2023)
+write.csv(comparison_2023, file = "results/model_selection/comparison_2023_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+comparison_2023  %>%
+ pretty_kable()
+```   
+
+## Seed Treatment Comparisons
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+seed_trt=purrr::map2_dfr(
+  models_2023, names(models_2023),
+  ~ st_contrasts(.x, transf=TRUE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast ) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error)%>%
+  relocate(Reference,.before =predicted.value)
+
+
+write.csv(seed_trt, file = "results/seed_trt/seed_trt_2023_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+seed_trt  %>%
+ pretty_kable() 
+
+```
+
+## Cultivar and Interaction Comparisons
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+cult = purrr::map2_dfr(
+  models_2023, names(models_2023),
+  ~ cult_contrasts_ss(.x,year= 2023, transf=TRUE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error)%>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(cult, file = "results/cult_int/cult_int_2023_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+cult  %>%
+ pretty_kable()
+```
+
+## Variance Components
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+var_table = imap_dfr(models_2023, ~ extract_varcomps(.x) %>%
+                        mutate(Model = .y)) %>%
+  dplyr::select(Component, Model, Formatted) %>%
+  pivot_wider(names_from = Model, values_from = Formatted)
+
+write.csv(var_table, file = "results/variances/var_table_2023_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+var_table  %>%
+ pretty_kable()
+
+```  
+
+# Multi-site Analysis
+
+```{r, include=FALSE}
+# Verify experimental design balance across locations
+table(dat$block,dat$year)
+table(dat$cult,dat$year)
+table(dat$seed_trt,dat$year)
+```
+
+```{r}
+# Check for rank deficiencies
+model_matrix = model.matrix(~ site*seed_trt*cult, data = dat)
+qr_mm = qr(model_matrix)
+rank_deficiency = ncol(model_matrix) - qr_mm$rank;rank_deficiency # Should be 0 ideally
+```
+
+### Baseline Model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+baseline = multi_site_models(dat, "baseline")
+
+baseline = update.asreml(baseline)
+baseline = update.asreml(baseline)
+baseline = update.asreml(baseline)
+```
+
+```{r}
+wald(baseline, trace=FALSE)
+```
+
+Same model accounting for physical plot layout in residuals. Residuals are independent row and column effects
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+structured = multi_site_models(dat, "structured")
+
+structured = update.asreml(structured)
+structured = update.asreml(structured)
+structured = update.asreml(structured)
+```
+
+```{r}
+wald(structured, trace=FALSE)
+```
+
+
+### Row-wise first-order autoregressive (AR1) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1 = multi_site_models(dat, "ar1")
+
+ar1 = update.asreml(ar1)
+ar1 = update.asreml(ar1)
+ar1 = update.asreml(ar1)
+```
+
+```{r}
+wald(ar1, trace=FALSE)
+```
+
+
+### AR1 with independent error term (AR1 + Nugget) model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ar1_nugget = multi_site_models(dat, "ar1_nugget")
+
+ar1_nugget = update.asreml(ar1_nugget)
+ar1_nugget = update.asreml(ar1_nugget)
+ar1_nugget = update.asreml(ar1_nugget)
+```
+
+```{r}
+wald(ar1_nugget, trace=FALSE)
+```
+
+
+### Trend-adjusted (TA) spatial model
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+ta = multi_site_models(dat, "ta")
+
+ta = update.asreml(ta)
+ta = update.asreml(ta)
+ta = update.asreml(ta)
+```
+
+```{r}
+wald(ta, trace=FALSE)
+```
+
+```{r,fig.width=4, fig.height=4}
+plot(ta)
+plot(asreml::varioGram(ta))
+```
+
+### Tensor Product P-Spline Model (TPS)
+
+```{r, echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+tps =  multi_site_models(dat, "tps")
+
+tps = update.asreml(tps)
+tps = update.asreml(tps)
+tps = update.asreml(tps)
+tps = update.asreml(tps)
+tps = update.asreml(tps)
+tps = update.asreml(tps)
+```
+
+```{r}
+wald(tps, trace=FALSE)
+```
+
+
+## Model Comparisons
+```{r,echo=FALSE}
+models_multi = list(
+  "baseline"=baseline,
+  "ar1"=ar1,
+  "ar1_nugget"=ar1_nugget,
+  "ta"=ta,
+  "tps"=tps)
+
+comparison_multi = icREML(models_multi)
+write.csv(comparison_multi, file = "results/model_selection/comparison_multi_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+comparison_multi  %>%
+ pretty_kable()
+```   
+
+## Seed Treatment Comparisons
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+seed_trt=purrr::map2_dfr(
+  models_multi, names(models_multi),
+  ~ st_contrasts(.x, transf=TRUE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast ) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error)%>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(seed_trt, file = "results/seed_trt/seed_trt_multi_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+seed_trt %>%
+ pretty_kable()
+```
+
+## Cultivar and Interaction Comparisons
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+cult = purrr::map2_dfr(
+  models_multi, names(models_multi),
+  ~ cult_contrasts_ms(.x,transf=TRUE)$contrast %>%
+      mutate(Model = .y))  %>% arrange(desc(Contrast)) %>% relocate(Model,.before =Contrast) %>%
+  relocate(lower.Confidence.limit,upper.Confidence.limit,.after = standard.error)%>%
+  relocate(Reference,.before =predicted.value)
+
+write.csv(cult, file = "results/cult_int/cult_int_multi_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+cult  %>%
+ pretty_kable()
+```
+
+## Variance Components
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+var_table = imap_dfr(models_multi, ~ extract_varcomps(.x) %>%
+                        mutate(Model = .y)) %>%
+  dplyr::select(Component, Model, Formatted) %>%
+  pivot_wider(names_from = Model, values_from = Formatted)
+
+write.csv(var_table, file = "results/variances/var_table_multi_rf.csv", row.names = FALSE)
+```
+
+```{r, echo=TRUE}
+var_table  %>%
+ pretty_kable()
+```  
+
+## Total Trend
+
+```{r,echo=FALSE,fig.width=10,fig.height=5}
+
+outer = dat %>% 
+  group_by(year) %>% 
+  summarise(
+    xmin = min(col) ,
+    xmax = max(col),
+    ymin = min(row),
+    ymax = max(row),
+    .groups = "drop"
+  )
+
+
+  nbreaks = 12
+  max_val = max(dat$SCN_rf,na.rm = T)
+  min_val = min(dat$SCN_rf,na.rm = T)
+  contours = list(breaks = round(seq(min_val, max_val, length.out = nbreaks),1))
+    
+  tpsfit.2022$year = 2022
+  tpsfit.2023$year = 2023
+  trend_data = rbind(tpsfit.2022, tpsfit.2023)
+  
+  dat = left_join(dat,trend_data)
+  
+  
+  rf=ggplot(dat, aes(y = row, x = col, z = SCN_rf)) +
+        geom_contour_filled(breaks = contours$breaks, alpha = 0.9) +
+          scale_fill_manual(
+            values = cc, 
+            name = expression(atop("Calculated SCN reproduction", paste("factor [" * log(R[f]) == P[f]/P[i] * "]"))),
+            drop = FALSE
+          ) +
+        facet_grid(~year) +
+        scale_y_continuous(breaks = c(1, 5, 10, 15, 20, 24)) +
+        labs(x = "Column ID", y = "Row ID") +
+    geom_rect(
+      data = outer,
+      aes(xmin = 1, xmax = xmax, ymin = 1, ymax = ymax),
+      inherit.aes = FALSE,
+      fill = NA,
+      color = "black",
+      linewidth = 0.8
+    )+
+     geom_tile(data = tile_data, aes(x = col, y = row), 
+              fill = NA, color = "black", linewidth = 0.2, 
+              inherit.aes = FALSE) 
+    
+  max_trend = 2.4
+  min_trend = -2.5
+  trend_breaks = seq(min_trend, max_trend, length.out = nbreaks)
+  contours_trend = list(breaks =round( trend_breaks,1))
+  
+  
+  trend = dat %>%
+    ggplot(aes(y = row, x = col, z = total)) +
+    geom_contour_filled(breaks = contours_trend$breaks, alpha = 0.9) +
+    scale_fill_manual(
+      values = cc, 
+      name = expression(atop("TPS fitted spatial trend for SCN", paste("reproduction factor [" * log(R[f]) == P[f]/P[i] * "]"))),
+      drop = FALSE
+    ) +
+    scale_y_continuous(breaks = c(1, 5, 10, 15, 20, 24)) +
+    facet_grid(~year) +
+    labs(x = "Column ID", y = "Row ID") +
+      geom_rect(
+      data = outer,
+      aes(xmin = 1, xmax = xmax, ymin = 1, ymax = ymax),
+      inherit.aes = FALSE,
+      fill = NA,
+      color = "black",
+      linewidth = 0.8
+    )+
+     geom_tile(data = tile_data, aes(x = col, y = row), 
+              fill = NA, color = "black", linewidth = 0.2, 
+              inherit.aes = FALSE) 
+  
+  rf + trend + plot_annotation(tag_levels = 'A') 
+  
+  ggsave("results/fig_3.tiff", units = "in", width = 10.5, height = 5)
+
+```
+
+
+```{r}
+summary(baseline$residuals)
+summary(tps$residuals)
+
+```
+
+```{r}
+sessionInfo()
+```
