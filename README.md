@@ -17,7 +17,7 @@ The following source code accompanies our publication, to be submitted to *Phyto
 
 This repository contains data and code for analyzing the effectiveness of integrated management 
 strategies for soybean cyst nematode (SCN) using spatially informed mixed models. The study evaluates 
-SCN population dynamics (reproduction factor, *rf*) and yield responses (*yld*) across field trials 
+SCN population dynamics (reproduction factor, *Rf*) and yield responses across field trials 
 conducted in 2022 and 2023 in Ohio, incorporating spatial autocorrelation structures to 
 account for within-field heterogeneity and improve estimation precision.
 
@@ -92,11 +92,11 @@ variance components (saved in `variances/`).
 
 ### Reproduction Factor Analysis (`spatial_modeling_rf.qmd`)
 
-This Quarto document analyzes the SCN reproduction factor (rf = log(Pf/Pi)) using the same modeling framework as the yield analysis.
+This Quarto document analyzes the SCN reproduction factor (*Rf = log(P_f/P_i)*) using the same modeling framework as the yield analysis.
 
 ### Custom Functions (`functions.R`)
 
-This code defines a suite of R functions to evaluate ASReml models and extract biologically interpretable contrasts. The `icREML` function 
+This code defines a suite of R functions to evaluate ASReml-R models and extract biologically interpretable contrasts. The `icREML` function 
 computes AIC and BIC from a list of fitted models using restricted maximum likelihood. The `st_contrasts`, `cult_contrasts_ss`, and `cult_contrasts_ms` 
 functions estimate and optionally back-transform contrasts for seed treatment and cultivar effects, while `spatial_matrix` constructs 
 spatial basis matrices for tensor-product spline modeling across field trial sites.
@@ -107,4 +107,4 @@ spatial basis matrices for tensor-product spline modeling across field trial sit
 
 * Velazco, J. G., Rodríguez-Álvarez, M. X., Boer, M. P., Jordan, D. R., Eilers, P. H. C., Malosetti, M., and van Eeuwijk, F. A. (2017). Modelling spatial trends in sorghum breeding field trials using a two-dimensional P-spline mixed model. Theoretical and Applied Genetics, 130, 1375–1392.
 
-* Welham, S. J. (2022). TPSbits: Creates structures to enable fitting and examination of 2D tensor-product splines using ASReml-R (R package version 1.0.2) [Computer software]. Retrieved August 4, 2025, from https://mmade.org/tpsbits
+* Welham, S. J. (2022). TPSbits: Creates structures to enable fitting and examination of 2D tensor-product splines using ASReml-R (R package version 1.0.3) [Computer software]. Retrieved August 4, 2025, from https://mmade.org/tpsbits.

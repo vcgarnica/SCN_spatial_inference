@@ -24,7 +24,7 @@ Soybean cyst nematode (SCN), caused by *Heterodera glycines*, is among the most 
 
 Effective SCN management relies on integrated strategies. Host resistance is the most cost-effective tool, with PI 88788 and Peking providing season-long protection when matched to local nematode populations. However, SCN populations display high virulence diversity, and repeated use of the same resistance genes accelerates adaptation. Seed-applied products such as fluopyram can protect soybean yield under SCN pressure, but they generally do not reduce nematode reproduction to the extent achieved by host resistance, and their efficacy remains variable.
 
-This study evaluates integrated SCN management strategies combining resistant cultivars and fluopyram seed treatment on soybean yield and SCN reproduction. We investigate the yield sensitivity of Peking- and PI 88788-derived resistance under pressure from HG Type 1.2.5.7. Critically, we employ advanced spatial modeling to account for field-scale heterogeneity in nematode distribution and soil properties, thereby improving the precision of treatment effect estimates and the reliability of our inferences.
+This study evaluates integrated SCN management strategies combining resistant cultivars and fluopyram seed treatment on soybean yield and SCN reproduction. We investigate the yield sensitivity of Peking- and PI 88788-derived resistance under pressure from HG Type 1.2–. Critically, we employ advanced spatial modeling to account for field-scale heterogeneity in nematode distribution and soil properties, thereby improving the precision of treatment effect estimates and the reliability of our inferences.
 
 ## Objectives {-}
 
@@ -32,7 +32,7 @@ With PI 88788 as the predominant resistance source in Ohio and Peking becoming m
 
 Therefore, the objectives of this study are to:
 
-* Evaluate the individual and combined effects of Peking- and PI 88788-derived resistance with fluopyram seed treatment on soybean yield and SCN reproduction in Ohio fields infested with the virulent HG Type 1.2.5.7
+* Evaluate the individual and combined effects of Peking- and PI 88788-derived resistance with fluopyram seed treatment on soybean yield and SCN reproduction in Ohio fields infested with the virulent HG Type 1.2– and 2–.
 
 * Quantify and compare the yield sensitivity (damage coefficients) of these resistance sources to increasing pre-plant SCN pressure
 
@@ -1183,7 +1183,7 @@ trend = dat %>%
   geom_contour_filled(breaks = contours_trend$breaks, alpha = 0.9) +
   scale_fill_manual(
     values = cc, 
-    name = expression(atop("Fitted spatial trend", paste("for yield (kg ", ha^{-1}, ")"))),
+    name = expression(atop("Fitted spatial trend", paste(" (kg ", ha^{-1}, ")"))),
     drop = FALSE
   ) +
   scale_y_continuous(breaks = c(1, 5, 10, 15, 20, 24)) +
@@ -1227,9 +1227,9 @@ eff_data = rbind(eff_st_multi, eff_cult_multi) %>%
   ) %>%
   mutate(
     Comparison = case_when(
-      str_detect(Contrast, "Fluopyram vs Base") ~ "Fluopyram vs. base (sub-plot contrast)",
-      str_detect(Contrast, "Peking vs PI88788") ~ "Peking vs. PI 88788 (whole-plot contrast)",
-      str_detect(Contrast, "Peking \\+ Base vs PI88788 \\+ Fluopyram") ~ "Peking + base vs. PI 88788 + fluopyram (sub-plot contrast)",
+      str_detect(Contrast, "Fluopyram vs Base") ~ "Fluopyram vs. base (sub-plot level)",
+      str_detect(Contrast, "Peking vs PI88788") ~ "Peking vs. PI 88788 (whole-plot level)",
+      str_detect(Contrast, "Peking \\+ Base vs PI88788 \\+ Fluopyram") ~ "Peking + base vs. PI 88788 + fluopyram (sub-plot level)",
       TRUE ~ NA_character_
     )
   )

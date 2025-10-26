@@ -841,7 +841,7 @@ outer = dat %>%
         geom_contour_filled(breaks = contours$breaks, alpha = 0.9) +
           scale_fill_manual(
             values = cc, 
-            name = expression(atop("Calculated SCN reproduction", paste("factor [" * log(R[f]) == P[f]/P[i] * "]"))),
+            name = expression(atop("Calculated SCN reproduction", paste("factor [" * R[f] == log(P[f]/P[i]) * "]"))),
             drop = FALSE
           ) +
         facet_grid(~year) +
@@ -870,7 +870,7 @@ outer = dat %>%
     geom_contour_filled(breaks = contours_trend$breaks, alpha = 0.9) +
     scale_fill_manual(
       values = cc, 
-      name = expression(atop("TPS fitted spatial trend for SCN", paste("reproduction factor [" * log(R[f]) == P[f]/P[i] * "]"))),
+      name = expression(atop("TPS fitted spatial trend", paste(" [" * R[f] == log(P[f]/P[i]) * "]"))),
       drop = FALSE
     ) +
     scale_y_continuous(breaks = c(1, 5, 10, 15, 20, 24)) +
